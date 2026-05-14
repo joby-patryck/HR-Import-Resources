@@ -1,0 +1,14 @@
+{
+    "tenants": [
+        {
+            "tenant_name": "Joby Aviation Germany Tenant",
+            "tenant_id": "jbg",
+            "business_unit_description": "Joby Germany GmbH"
+        },
+        {
+            "tenant_name": "Joby Aviation Academy Tenant",
+            "tenant_id": "jaa",
+            "business_unit_description": "TBD"
+        }
+    ]
+}
