@@ -122,7 +122,7 @@ class HRImport:
             self.data.loc[name_index, "email"] = self.data["email"][name_index].lower()
             
             # Filter out known test/admin accounts to prevent test data in production systems
-            if self.data.loc[name_index, "idnumber"] == "joeben@joby.aero" or self.data.loc[name_index, "idnumber"] == "patryck.chipman@joby.aero":
+            if self.data.loc[name_index, "idnumber"] in pandas.read_csv("dont_suspend.csv")["email"].tolist():
                 self.data = self.data.drop(name_index)
 
         return
