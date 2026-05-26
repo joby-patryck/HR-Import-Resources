@@ -56,10 +56,12 @@ def main() -> None:
             # List comprehension filters tenants where tenant_id exactly matches normalized argument
             matches: list[dict[str, str]] = [tenant for tenant in tenants if tenant["tenant_id"] == normalized_arg]
             
+            # Handle special help cases without processing any tenant filtering or file input
             if arg == "-h" or arg == "--help":
                 usage()
                 return
             
+            # The elephant
             if arg == "-elephant":
                 print("Address me...")
                 return
