@@ -8,6 +8,7 @@ import sys
 import Tenants
 import HrImport
 
+QUIT_CRITERIA = {"q", "Q", "quit", "Quit", "QUIT", "exit", "Exit", "EXIT"}
 
 def main() -> None:
     """
@@ -55,7 +56,7 @@ def main() -> None:
     # Input stripping removes surrounding quotes that file explorers often add when copying paths
     filename: str = input().strip('"').strip("'")
     
-    while filename != 'q':
+    while filename not in QUIT_CRITERIA:
         # Instantiate HR import handler for this file and execute transformations with selected tenants
         hr_import: HrImport.HRImport = HrImport.HRImport(filename)
         hr_import.run(use_tenants)
