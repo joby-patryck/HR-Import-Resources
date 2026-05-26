@@ -117,12 +117,14 @@ class HRImport:
             self.data = self._split_tenant(tenant["business_unit_description"], tenant["tenant_id"])
         
         # Normalize email addresses and IDs to lowercase for consistent matching/comparison
+        dont_suspend = pandas.read_csv("dont_suspend.csv")["email"].tolist()
         for name_index in self.data.index:
             self.data.loc[name_index, "idnumber"] = self.data["idnumber"][name_index].lower()
             self.data.loc[name_index, "email"] = self.data["email"][name_index].lower()
+            self.data.loc[name_index, "tenantmember"] = None  # Clear tenantmember for non-tenant-specific records to prevent accidental enrollment
             
             # Filter out known test/admin accounts to prevent test data in production systems
-            if self.data.loc[name_index, "idnumber"] in pandas.read_csv("dont_suspend.csv")["email"].tolist():
+            if self.data.loc[name_index, "idnumber"] in dont_suspend:
                 self.data = self.data.drop(name_index)
 
         return
