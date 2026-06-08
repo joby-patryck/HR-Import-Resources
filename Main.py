@@ -10,7 +10,7 @@ import shutil
 import Tenants
 import HrImport
 
-QUIT_CRITERIA = {"q", "Q", "quit", "Quit", "QUIT", "exit", "Exit", "EXIT"}
+QUIT_CRITERIA = {"q", "quit", "exit"}
 
 def usage() -> None:
     """
@@ -80,7 +80,7 @@ def main() -> None:
     # Input stripping removes surrounding quotes that file explorers often add when copying paths
     filename: str = input().strip('"').strip("'")
     
-    while filename not in QUIT_CRITERIA:
+    while filename.lower() not in QUIT_CRITERIA:
         # Backup original files to a separate directory to preserve unmodified data for auditing or reprocessing if needed
         try:
             oringial_files_dir = os.path.dirname(filename) + "/original_files"
