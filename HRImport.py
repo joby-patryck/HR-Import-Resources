@@ -87,19 +87,16 @@ class HRImport:
         # Systems may expect a specific indicator rather than null to distinguish missing from invalid
         self.data["Manager email"] = self.data["Manager email"].fillna("#N/A")
         
-        # Normalize email addresses and IDs to lowercase for consistent matching/comparison
-        for name_index in self.data.index:
-            # Remove suspended users from the file
-            if self.data.loc[name_index, "suspended"] == 1:
-                self.data = self.data.drop(name_index)
-                continue
+        # Drop suspended users
+        self.data = self.data.loc[self.data["suspended"] != 1, :].copy()
 
-            self.data.loc[name_index, "Manager email"] = self.data["Manager email"][name_index].lower()
-            self.data.loc[name_index, "useridnumber"] = self.data["useridnumber"][name_index].lower()
-            
-            # Filter out known test/admin accounts by idnumber to prevent test data in production
-            if self.data.loc[name_index, "idnumber"] == "joeben@joby.aero" or self.data.loc[name_index, "idnumber"] == "patryck.chipman@joby.aero":
-                self.data = self.data.drop(name_index)
+        # Normalize email addresses and IDs to lowercase for consistent matching/comparison
+        self.data["Manager email"] = self.data["Manager email"].str.lower()
+        self.data["useridnumber"] = self.data["useridnumber"].str.lower()
+
+        # Filter out known problematic accounts
+        dont_suspend = pandas.read_csv("dont_suspend.csv")["email"].tolist()
+        self.data = self.data.loc[~self.data["useridnumber"].isin(dont_suspend), :].copy()
 
         return
 
@@ -130,31 +127,21 @@ class HRImport:
         for tenant in tenants:
             self.data = self._split_tenant(tenant["business_unit_description"], tenant["tenant_id"])
         
-        # Normalize email addresses and IDs to lowercase for consistent matching/comparison
-        dont_suspend = pandas.read_csv("dont_suspend.csv")["email"].tolist()
-        for name_index in self.data.index:
-            # Remove active users from the file if the file is a terminated users file
-            if self.data.loc[name_index, "deleted"] == 0 and terminated:
-                self.data = self.data.drop(name_index)
-                continue
-
-            # Remove suspended users from the file if the file is not a terminated users file
-            if self.data.loc[name_index, "suspended"] == 1 and not terminated:
-                self.data = self.data.drop(name_index)
-                continue
-
-            self.data.loc[name_index, "idnumber"] = self.data["idnumber"][name_index].lower()
-            self.data.loc[name_index, "email"] = self.data["email"][name_index].lower()
-            self.data.loc[name_index, "tenantmember"] = None  # Clear tenantmember for non-tenant-specific records to prevent accidental enrollment
-            
-            # Filter out known test/admin accounts to prevent test data in production systems
-            if self.data.loc[name_index, "idnumber"] in dont_suspend:
-                self.data = self.data.drop(name_index)
-
-        # Remove the 'deleted' column and rename 'suspended' column to 'deleted'
-        if terminated:
+        if terminated: # If processing a terminated employee file, filter to suspended users and rename columns accordingly
+            self.data = self.data.loc[self.data["suspended"] == 1, :].copy()
             self.data = self.data.drop(columns=["deleted"])
             self.data = self.data.rename(columns={"suspended": "deleted"})
+        else: # For active employee files, filter out suspended users
+            self.data = self.data.loc[self.data["suspended"] == 0, :].copy()
+
+        # Normalize email addresses and IDs to lowercase for consistent matching/comparison
+        self.data["idnumber"] = self.data["idnumber"].str.lower()
+        self.data["email"] = self.data["email"].str.lower()
+        self.data["tenantmember"] = None  # Clear tenantmember for non-tenant-specific records to prevent accidental enrollment
+
+        # Filter out known problematic accounts
+        dont_suspend = pandas.read_csv("dont_suspend.csv")["email"].tolist()
+        self.data = self.data.loc[~self.data["idnumber"].isin(dont_suspend), :].copy()
 
         return
     
