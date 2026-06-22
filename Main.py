@@ -78,7 +78,8 @@ def main() -> None:
 
     # Loop until user enters 'q' to quit, processing each CSV file with the selected tenants
     # Input stripping removes surrounding quotes that file explorers often add when copying paths
-    filename: str = input().strip('"').strip("'").replace("\\", "").strip()
+    # filename: str = input().strip('"').strip("'").replace("\\", "").strip()
+    filename: str = input().strip('&').strip('"').strip("'").strip()
     
     while filename.lower() not in QUIT_CRITERIA:
         # Backup original files to a separate directory to preserve unmodified data for auditing or reprocessing if needed
@@ -94,7 +95,8 @@ def main() -> None:
         hr_import.run(use_tenants)
         
         # Prompt for next filename (or 'q' to exit)
-        filename = input().strip('"').strip("'").replace("\\", "").strip()
+        # filename = input().strip('&').strip('"').strip("'").replace("\\", "").strip()
+        filename = input().strip('&').strip('"').strip("'").strip()
 
 
 if __name__ == "__main__":
