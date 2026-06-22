@@ -5,12 +5,32 @@ Entry point for interactive file processing with tenant selection via command-li
 Processes multiple CSV files sequentially with tenant-specific splitting and normalization.
 """
 import os
+import re
 import sys
 import shutil
 import Tenants
 import HRImport
 
 QUIT_CRITERIA = {"q", "quit", "exit"}
+
+def normalize_input_path(raw: str) -> str:
+    """
+    Clean a file path pasted or drag-and-dropped into the prompt, cross-platform.
+
+    File explorers and terminals add noise that differs by OS:
+    - macOS/Linux terminals backslash-escape spaces and special chars (``My\\ File``),
+      where the backslash is an escape character, NOT a path separator.
+    - Windows uses the backslash as its path separator, so it must be preserved.
+    - Both may wrap the path in quotes or prepend stray ``&`` characters.
+
+    Backslash handling is therefore platform-specific: on POSIX we unescape
+    ``\\`` sequences; on Windows we leave backslashes intact.
+    """
+    path = raw.strip().strip('&').strip('"').strip("'").strip()
+    if os.sep != "\\":
+        # POSIX: backslashes are shell escapes (e.g. "\ " for a space) — unescape them.
+        path = re.sub(r'\\(.)', r'\1', path)
+    return os.path.normpath(path)
 
 def usage() -> None:
     """
@@ -78,15 +98,14 @@ def main() -> None:
 
     # Loop until user enters 'q' to quit, processing each CSV file with the selected tenants
     # Input stripping removes surrounding quotes that file explorers often add when copying paths
-    # filename: str = input().strip('"').strip("'").replace("\\", "").strip()
-    filename: str = input().strip('&').strip('"').strip("'").strip()
-    
+    filename = normalize_input_path(input())  # Cross-platform path
+
     while filename.lower() not in QUIT_CRITERIA:
         # Backup original files to a separate directory to preserve unmodified data for auditing or reprocessing if needed
         try:
-            oringial_files_dir = os.path.dirname(filename) + "/Original Files"
+            oringial_files_dir = os.path.join(os.path.dirname(filename), "Original Files")
             os.makedirs(oringial_files_dir, exist_ok=True)
-            shutil.copy(filename, oringial_files_dir + "/" + "Original " + os.path.basename(filename))
+            shutil.copy(filename, os.path.join(oringial_files_dir, "Original " + os.path.basename(filename)))
         except FileNotFoundError as e:
             print(f"Warning: Failed to backup original file '{filename}' - {e}")
 
@@ -95,8 +114,7 @@ def main() -> None:
         hr_import.run(use_tenants)
         
         # Prompt for next filename (or 'q' to exit)
-        # filename = input().strip('&').strip('"').strip("'").replace("\\", "").strip()
-        filename = input().strip('&').strip('"').strip("'").strip()
+        filename = normalize_input_path(input())  # Cross-platform path
 
 
 if __name__ == "__main__":
