@@ -2,24 +2,69 @@
 
 Interactive CLI utility for normalizing and splitting HR export CSV files (Users and Job Assignments) before they are imported into downstream systems (the Lift LMS). Files are normalized (validated, lowercased, suspended accounts filtered) and tenant-specific records are extracted into separate output files with an auto-enrollment column added.
 
+## Download & run (no setup)
+
+Pre-built desktop versions of the GUI ([App.py](App.py)) are published on the [Releases](../../releases) page — no Python, `pip`, or setup required.
+
+1. Download the file for your OS from the latest release:
+   - **Windows** — `HR-Import-Windows.zip` → unzip → run `HR Import.exe`
+   - **macOS** — `HR-Import-macOS.zip` → unzip → run `HR Import.app`
+2. **Place your `dont_suspend.csv` next to the app** (same folder as `HR Import.exe`, or alongside `HR Import.app`). It is not bundled — without it the app still runs, but the retain-list filter is skipped (you'll see a warning in the log). See step 4 of **Setup** for the file format.
+
+> **First launch — unsigned app warnings.** These builds are not code-signed, so the OS will warn the first time:
+> - **Windows:** SmartScreen → click **More info → Run anyway**.
+> - **macOS:** right-click the app → **Open** → **Open** (don't double-click the first time).
+
+The `tenants.json` config *is* bundled into the app; to change tenants you rebuild (see **Building the desktop app**).
+
 ## Requirements
 
-- [Python 3.11+](https://www.python.org/downloads/)
-- [pandas](https://pandas.pydata.org/) (the only third-party dependency; everything else is part of the Python standard library)
+- [Python 3.11+](https://www.python.org/downloads/) — install from **python.org** or Homebrew. On macOS, do **not** use the system `/usr/bin/python3` (Apple Command Line Tools): its bundled Tcl/Tk is broken and the GUI aborts with `macOS 15 (1507) or later required`.
+- [pandas](https://pandas.pydata.org/) — the only `pip`-installable dependency (installed via `requirements.txt` below).
+- **tkinter** — required only by the GUI ([App.py](App.py)). It ships with most Python builds but is **not** on PyPI, so it cannot be installed with `pip`. If `python -c "import tkinter"` fails, install it as an OS package:
+
+  | Platform | Command |
+  |---|---|
+  | macOS (Homebrew) | `brew install python-tk` |
+  | Debian / Ubuntu | `sudo apt install python3-tk` |
+  | Fedora | `sudo dnf install python3-tkinter` |
+  | Windows | included with the [python.org installer](https://www.python.org/downloads/) |
+
+Everything else the program uses (`json`, `os`, `re`, `sys`, `shutil`, `pathlib`) is part of the Python standard library.
 
 ## Setup
 
 1. Clone or download this repository.
 
-2. Install the required packages from [requirements.txt](requirements.txt):
+2. Create and activate a virtual environment, then install the pip dependencies from [requirements.txt](requirements.txt). Using a venv pins the project to a known-good interpreter (important on macOS — see **Requirements**):
 
-   ```powershell
+   **macOS / Linux:**
+
+   ```bash
+   python3 -m venv .venv          # on macOS use python3.13 if python3 is Apple's broken build
+   source .venv/bin/activate
    pip install -r requirements.txt
    ```
 
-   This installs `pandas`, which is all the program needs to run.
+   **Windows (PowerShell):**
 
-3. Create a `dont_suspend.csv` file in the project directory (it is git-ignored). It must contain an `email` column listing the IDs (matched against `idnumber` / `useridnumber`) that should always be filtered out:
+   ```powershell
+   py -m venv .venv
+   .venv\Scripts\Activate.ps1
+   pip install -r requirements.txt
+   ```
+
+   This installs `pandas`. Inside the activated venv, `python` and `pip` both point to the correct interpreter. If you plan to run the GUI, also make sure `tkinter` is available (see **Requirements** above). The `.venv/` folder is git-ignored.
+
+3. Verify your Python can run the GUI toolkit:
+
+   ```bash
+   python -c "import tkinter; tkinter.Tk()"
+   ```
+
+   A small empty window should appear (close it). If it errors instead, fix `tkinter` / your Python install before continuing.
+
+4. Create a `dont_suspend.csv` file in the project directory (it is git-ignored). It must contain an `email` column listing the IDs (matched against `idnumber` / `useridnumber`) that should always be filtered out:
 
    ```csv
    email
@@ -66,6 +111,28 @@ Tenant definitions live in [tenants.json](tenants.json) (currently `jbg` — Job
 
 > **Warning:** The original CSV is overwritten in place when processing completes. Before each file is processed, a backup of the original is copied to an `original_files/` subfolder (alongside the input file) prefixed with `Original `.
 
+## Building the desktop app
+
+The download-and-run builds above are produced by [PyInstaller](https://pyinstaller.org/) from [HRImport.spec](HRImport.spec). PyInstaller **cannot cross-compile** — each OS's artifact must be built on that OS.
+
+**Automated (recommended).** The [build workflow](.github/workflows/build.yml) builds both the Windows `.exe` and macOS `.app` on GitHub's runners. Push a version tag and the zipped artifacts are attached to the matching Release automatically:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+(You can also trigger it manually from the Actions tab via **Run workflow** to get artifacts without publishing a release.)
+
+**Local build.** From an activated venv with dependencies installed (see **Setup**):
+
+```bash
+pip install pyinstaller
+pyinstaller HRImport.spec        # output in dist/  (HR Import.exe / HR Import.app)
+```
+
+The build bundles `tenants.json`; `dont_suspend.csv` is intentionally left external and user-editable (resolved next to the app at runtime — see [resources.py](resources.py)).
+
 ## Project layout
 
 | File | Purpose |
@@ -73,6 +140,9 @@ Tenant definitions live in [tenants.json](tenants.json) (currently `jbg` — Job
 | [Main.py](Main.py) | Entry point — validates tenant arguments, backs up originals, and runs the read → process loop. |
 | [HRImport.py](HRImport.py) | `HRImport.run()` — dispatches and performs processing based on the filename. |
 | [Tenants.py](Tenants.py) | `load_tenants()` — reads tenant definitions from `tenants.json`. |
+| [resources.py](resources.py) | Resolves data-file paths in both dev and packaged (PyInstaller) builds. |
+| [HRImport.spec](HRImport.spec) | PyInstaller build recipe for the desktop app. |
+| [.github/workflows/build.yml](.github/workflows/build.yml) | CI that builds the Windows/macOS apps and attaches them to Releases. |
 | [tenants.json](tenants.json) | Tenant ID → business-unit configuration. |
 | `dont_suspend.csv` | Local (git-ignored) list of IDs to always retain. Required at runtime. |
 | [not_in_both.py](not_in_both.py) | Standalone helper (not wired into `Main.py`). **LEGACY** |

@@ -1,0 +1,61 @@
+name: Build desktop app
+
+# Build a Windows .exe and a macOS .app. On a version tag (e.g. v1.0.0) the
+# zipped artifacts are attached to the matching GitHub Release so users can
+# download and run them with no Python or setup. Manual runs (workflow_dispatch)
+# build the artifacts without publishing a release.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # required to upload assets to the Release
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset: HR-Import-Windows.zip
+          - os: macos-latest
+            asset: HR-Import-macOS.zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build
+        run: pyinstaller HRImport.spec
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path "dist/HR Import.exe" -DestinationPath "${{ matrix.asset }}"
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: cd dist && zip -r "../${{ matrix.asset }}" "HR Import.app"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}

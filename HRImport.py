@@ -6,6 +6,23 @@ Routes file processing based on filename keywords ("Job Assignments" vs "Users")
 """
 import pandas
 
+from resources import external_path
+
+
+def _load_dont_suspend() -> list[str]:
+    """
+    Load the retain-list of IDs that must never be filtered out.
+
+    The file is user-editable and expected alongside the app (not bundled), so
+    it may be absent on a fresh install. When missing we warn and return an
+    empty list rather than crashing, so the app still runs out of the box.
+    """
+    path = external_path("dont_suspend.csv")
+    if not path.exists():
+        print(f"Warning: {path.name} not found at {path} - skipping retain-list filter.")
+        return []
+    return pandas.read_csv(path)["email"].tolist()
+
 
 class HRImport:
     """
@@ -98,7 +115,7 @@ class HRImport:
         self.data["useridnumber"] = self.data["useridnumber"].str.lower()
 
         # Filter out known problematic accounts
-        dont_suspend = pandas.read_csv("dont_suspend.csv")["email"].tolist()
+        dont_suspend = _load_dont_suspend()
         self.data = self.data.loc[~self.data["useridnumber"].isin(dont_suspend), :].copy()
 
         return
@@ -143,7 +160,7 @@ class HRImport:
         self.data["tenantmember"] = None  # Clear tenantmember for non-tenant-specific records to prevent accidental enrollment
 
         # Filter out known problematic accounts
-        dont_suspend = pandas.read_csv("dont_suspend.csv")["email"].tolist()
+        dont_suspend = _load_dont_suspend()
         self.data = self.data.loc[~self.data["idnumber"].isin(dont_suspend), :].copy()
 
         return

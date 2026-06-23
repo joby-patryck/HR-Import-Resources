@@ -103,9 +103,9 @@ def main() -> None:
     while filename.lower() not in QUIT_CRITERIA:
         # Backup original files to a separate directory to preserve unmodified data for auditing or reprocessing if needed
         try:
-            oringial_files_dir = os.path.join(os.path.dirname(filename), "Original Files")
-            os.makedirs(oringial_files_dir, exist_ok=True)
-            shutil.copy(filename, os.path.join(oringial_files_dir, "Original " + os.path.basename(filename)))
+            original_files_dir = os.path.join(os.path.dirname(filename), "Original Files")
+            os.makedirs(original_files_dir, exist_ok=True)
+            shutil.copy(filename, os.path.join(original_files_dir, "Original " + os.path.basename(filename)))
         except FileNotFoundError as e:
             print(f"Warning: Failed to backup original file '{filename}' - {e}")
 
