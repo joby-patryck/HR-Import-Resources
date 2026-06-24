@@ -1,8 +1,10 @@
 """
 HR Import module for processing and transforming HR data files.
 
-Converts names to lowercase and separates Joby Germany users into tenant-specific files.
-Routes file processing based on filename keywords ("Job Assignments" vs "Users").
+Routes file processing based on filename keywords ("Job Assignments" vs "Users"),
+normalizes IDs/emails to lowercase, filters by suspension state, splits rows for
+any configured tenants (see tenants.json) into their own files, and drops any IDs
+listed in dont_suspend.csv. Shared by both front ends (App.py GUI and Main.py CLI).
 """
 import pandas
 
@@ -11,8 +13,10 @@ from resources import external_path
 
 def _load_dont_suspend() -> list[str]:
     """
-    Load the retain-list of IDs that must never be filtered out.
+    Load the retain-list of IDs to exclude from the output.
 
+    These are people who must NOT be suspended/deleted downstream, so they are
+    dropped from the processed file (and therefore left untouched by the import).
     The file is user-editable and expected alongside the app (not bundled), so
     it may be absent on a fresh install. When missing we warn and return an
     empty list rather than crashing, so the app still runs out of the box.
@@ -29,9 +33,11 @@ class HRImport:
     Process HR CSV files with tenant splitting and data normalization.
     
     Performs file-type specific transformations:
-    - Job Assignments: validates useridnumber, filters test accounts, lowercases fields
-    - Users: splits tenant-specific records, validates idnumber, lowercases fields
-    
+    - Job Assignments: validates useridnumber, drops suspended users, lowercases fields
+    - Users: splits tenant-specific records, validates idnumber, filters by suspension
+      state (inverted for "terminated" files), lowercases fields
+    Both paths drop any IDs listed in dont_suspend.csv (the retain-list).
+
     Attributes:
         filename (str): Path to the CSV file being processed
         data (pandas.DataFrame): CSV data loaded into memory
@@ -59,7 +65,11 @@ class HRImport:
         For each tenant, filters records matching the business_unit_description (case-insensitive),
         writes them to a new CSV with tenant suffix and adds 'tenantmember' column for auto-enrollment.
         Returns the main dataframe with tenant records removed.
-        
+
+        Special case: tenant_id "jai" (Joby Aero Inc.) is still split into its own file, but
+        'tenantmember' is left empty rather than set, since it is the default and needs no
+        auto-enrollment tenant. The new tenant file is re-run through run([]) for normalization.
+
         Args:
             business_unit_description: Business unit identifier to filter on (e.g., "joby germany gmbh")
             tenant_id: Tenant code to add in output file naming and tenantmember column (e.g., "jbg")
@@ -80,7 +90,12 @@ class HRImport:
         # Write tenant records to new CSV with tenant identifier in filename if records found
         if not tenant_data.empty:
             tenant_filename = self.filename.replace(".csv", f" {tenant_id}.csv")
-            tenant_data["tenantmember"] = tenant_id  # Add column for auto-enrollment in downstream systems
+
+            if tenant_id == "jai": # Joby Aero Inc. does not require it's own tenant
+                tenant_data["tenantmember"] = None
+            else:
+                tenant_data["tenantmember"] = tenant_id  # Add column for auto-enrollment in downstream systems
+                
             tenant_data.to_csv(tenant_filename, index=False)
 
             tentant_import = HRImport(tenant_filename)
@@ -92,10 +107,11 @@ class HRImport:
 
     def _job_assignments(self) -> None:
         """
-        Transform Job Assignments file: validate required fields, standardize casing, filter test accounts.
-        
+        Transform Job Assignments file: validate required fields, standardize casing, apply retain-list.
+
         Removes rows with missing useridnumber, fills NaN manager emails with "#N/A" placeholder,
-        converts manager email and useridnumber to lowercase, and filters out known test accounts.
+        drops suspended users, converts manager email and useridnumber to lowercase, and drops any
+        IDs listed in dont_suspend.csv (the retain-list — excluded so they aren't acted on downstream).
         """
         # Remove rows where useridnumber is missing, empty, or NaN - this field is required downstream
         self.data = self.data.loc[
@@ -114,7 +130,7 @@ class HRImport:
         self.data["Manager email"] = self.data["Manager email"].str.lower()
         self.data["useridnumber"] = self.data["useridnumber"].str.lower()
 
-        # Filter out known problematic accounts
+        # Drop IDs on the retain-list so they aren't suspended/deleted downstream
         dont_suspend = _load_dont_suspend()
         self.data = self.data.loc[~self.data["useridnumber"].isin(dont_suspend), :].copy()
 
@@ -122,11 +138,12 @@ class HRImport:
 
     def _users(self, tenants: list[dict[str, str]]) -> None:
         """
-        Transform Users file: validate required fields, split by tenant, standardize casing, filter test accounts.
-        
+        Transform Users file: validate required fields, split by tenant, standardize casing, apply retain-list.
+
         Removes rows with missing idnumber, iterates through configured tenants to split records
-        into tenant-specific files, then converts idnumber and email to lowercase and filters test accounts.
-        
+        into tenant-specific files, filters by suspension state (inverted for "terminated" files),
+        converts idnumber and email to lowercase, and drops any IDs listed in dont_suspend.csv.
+
         Args:
             tenants: List of tenant configuration dicts with keys:
                      - tenant_id: tenant code identifier
@@ -157,9 +174,14 @@ class HRImport:
         # Normalize email addresses and IDs to lowercase for consistent matching/comparison
         self.data["idnumber"] = self.data["idnumber"].str.lower()
         self.data["email"] = self.data["email"].str.lower()
-        self.data["tenantmember"] = None  # Clear tenantmember for non-tenant-specific records to prevent accidental enrollment
+        # Only initialize tenantmember when it isn't already present. Tenant-specific
+        # files written by _split_tenant arrive here (via run([])) with this column
+        # already populated with their tenant_id, so we must not clobber it. The main
+        # (non-tenant) file has no such column and gets None to prevent accidental enrollment.
+        if "tenantmember" not in self.data.columns:
+            self.data["tenantmember"] = None
 
-        # Filter out known problematic accounts
+        # Drop IDs on the retain-list so they aren't suspended/deleted downstream
         dont_suspend = _load_dont_suspend()
         self.data = self.data.loc[~self.data["idnumber"].isin(dont_suspend), :].copy()
 

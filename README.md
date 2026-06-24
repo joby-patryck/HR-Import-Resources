@@ -9,7 +9,7 @@ Pre-built desktop versions of the GUI ([App.py](App.py)) are published on the [R
 1. Download the file for your OS from the latest release:
    - **Windows** — `HR-Import-Windows.zip` → unzip → run `HR Import.exe`
    - **macOS** — `HR-Import-macOS.zip` → unzip → run `HR Import.app`
-2. **Place your `dont_suspend.csv` next to the app** (same folder as `HR Import.exe`, or alongside `HR Import.app`). It is not bundled — without it the app still runs, but the retain-list filter is skipped (you'll see a warning in the log). See step 4 of **Setup** for the file format.
+2. **Optionally place a `dont_suspend.csv` next to the app** (same folder as `HR Import.exe`, or alongside `HR Import.app`). It is not bundled and is optional — without it the app still runs, but the retain-list filter is skipped (you'll see a warning in the log). See step 4 of **Setup** for the file format.
 
 > **First launch — unsigned app warnings.** These builds are not code-signed, so the OS will warn the first time:
 > - **Windows:** SmartScreen → click **More info → Run anyway**.
@@ -20,8 +20,8 @@ The `tenants.json` config *is* bundled into the app; to change tenants you rebui
 ## Requirements
 
 - [Python 3.11+](https://www.python.org/downloads/) — install from **python.org** or Homebrew. On macOS, do **not** use the system `/usr/bin/python3` (Apple Command Line Tools): its bundled Tcl/Tk is broken and the GUI aborts with `macOS 15 (1507) or later required`.
-- [pandas](https://pandas.pydata.org/) — the only `pip`-installable dependency (installed via `requirements.txt` below).
-- **tkinter** — required only by the GUI ([App.py](App.py)). It ships with most Python builds but is **not** on PyPI, so it cannot be installed with `pip`. If `python -c "import tkinter"` fails, install it as an OS package:
+- [pandas](https://pandas.pydata.org/) and [tkinterdnd2](https://pypi.org/project/tkinterdnd2/) — the `pip`-installable dependencies (installed via `requirements.txt` below). `tkinterdnd2` provides the GUI's drag-and-drop support.
+- **tkinter** — required by the GUI ([App.py](App.py)). It ships with most Python builds but is **not** on PyPI, so it cannot be installed with `pip`. If `python -c "import tkinter"` fails, install it as an OS package:
 
   | Platform | Command |
   |---|---|
@@ -54,7 +54,7 @@ Everything else the program uses (`json`, `os`, `re`, `sys`, `shutil`, `pathlib`
    pip install -r requirements.txt
    ```
 
-   This installs `pandas`. Inside the activated venv, `python` and `pip` both point to the correct interpreter. If you plan to run the GUI, also make sure `tkinter` is available (see **Requirements** above). The `.venv/` folder is git-ignored.
+   This installs `pandas` and `tkinterdnd2`. Inside the activated venv, `python` and `pip` both point to the correct interpreter. If you plan to run the GUI, also make sure `tkinter` is available (see **Requirements** above). The `.venv/` folder is git-ignored.
 
 3. Verify your Python can run the GUI toolkit:
 
@@ -64,7 +64,7 @@ Everything else the program uses (`json`, `os`, `re`, `sys`, `shutil`, `pathlib`
 
    A small empty window should appear (close it). If it errors instead, fix `tkinter` / your Python install before continuing.
 
-4. Create a `dont_suspend.csv` file in the project directory (it is git-ignored). It must contain an `email` column listing the IDs (matched against `idnumber` / `useridnumber`) that should always be filtered out:
+4. *(Optional)* Create a `dont_suspend.csv` file in the project directory (it is git-ignored). It must contain an `email` column listing the IDs (matched against `idnumber` / `useridnumber`) that should be excluded from the output — i.e. people you do **not** want the downstream import to suspend or delete. The file is optional: if it is absent, processing continues and the retain-list filter is simply skipped (a warning is logged).
 
    ```csv
    email
@@ -74,6 +74,18 @@ Everything else the program uses (`json`, `os`, `re`, `sys`, `shutil`, `pathlib`
 
 ## Usage
 
+There are two front ends over the same processing core ([HRImport.py](HRImport.py)):
+
+- **GUI** ([App.py](App.py)) — the primary interface, and what the packaged desktop builds run. Launch it from an activated venv:
+
+  ```bash
+  python App.py
+  ```
+
+  Drag and drop one or more HR CSV files into the box, tick the tenant(s) to split out from the **SELECT TENANT(S)** menu (tenants come from [tenants.json](tenants.json); **None**/**All** entries select or clear them all), then click **PROCESS FILES**. The **LOG** panel reports success, backup warnings, or errors per file, and **HELP** opens an in-app guide. Requires `tkinter` and `tkinterdnd2` (see **Requirements** / [requirements.txt](requirements.txt)).
+
+- **CLI** ([Main.py](Main.py)) — interactive prompt-driven equivalent.
+
 Run the interactive CLI from the project directory:
 
 ```powershell
@@ -82,7 +94,7 @@ python Main.py
 
 # Run with one or more tenant IDs (case-insensitive, must exist in tenants.json)
 python Main.py jbg
-python Main.py jbg jaa
+python Main.py jbg bam
 ```
 
 After launch, paste a CSV path at the prompt (surrounding quotes and backslashes are stripped automatically). The CLI keeps prompting for files until you enter `q`, `quit`, or `exit`.
@@ -98,8 +110,8 @@ Other arguments:
 Every processed file is backed up first, then transformed in place.
 
 - **`Job Assignments` files** — drops rows with a missing `useridnumber`, fills missing `Manager email` values with `#N/A`, drops suspended users (`suspended == 1`), and lowercases `Manager email` and `useridnumber`.
-- **`Users` files** — drops rows with a missing `idnumber`, splits out tenant-specific rows (see below), filters by suspension state (see *Terminated files* below), lowercases `idnumber` and `email`, and clears the `tenantmember` column on the remaining (non-tenant) rows.
-- Both paths drop any account whose ID appears in `dont_suspend.csv` (matched against `idnumber` / `useridnumber`).
+- **`Users` files** — drops rows with a missing `idnumber`, splits out tenant-specific rows (see below), filters by suspension state (see *Terminated files* below), lowercases `idnumber` and `email`, and blanks the `tenantmember` column (set to empty) on the remaining (non-tenant) rows so they are not auto-enrolled.
+- Both paths drop any account whose ID appears in `dont_suspend.csv` (matched against `idnumber` / `useridnumber`), so the downstream import never suspends or deletes those people. This filter is skipped (with a warning) when `dont_suspend.csv` is absent.
 
 ### Terminated files
 
@@ -107,9 +119,25 @@ For `Users` files whose name contains `terminated` (case-insensitive), the suspe
 
 ### Tenant splitting
 
-Tenant definitions live in [tenants.json](tenants.json) (currently `jbg` — Joby Aviation Germany, and `jaa` — Joby Aviation Academy). For each tenant ID passed on the command line, rows whose `business unit description` matches the tenant's configured value (case-insensitive, whitespace-trimmed) are written to a sibling file `<original> <tenant_id>.csv` with an added `tenantmember` column (set to the tenant ID) used downstream for auto-enrollment. Those rows are removed from the main output, and the new tenant file is then run through the same normalization (with no further tenant splitting).
+Tenant definitions live in [tenants.json](tenants.json). Each entry maps a `tenant_id` (the code used on the CLI / in output filenames) to the `business_unit_description` it matches and a human-readable `tenant_name` (shown in the GUI dropdown). The configured tenants are:
 
-> **Warning:** The original CSV is overwritten in place when processing completes. Before each file is processed, a backup of the original is copied to an `original_files/` subfolder (alongside the input file) prefixed with `Original `.
+| `tenant_id` | Business unit | Tenant name |
+|---|---|---|
+| `jbg` | Joby Germany GmbH | Joby Aviation Germany Tenant |
+| `jaa` | TBD | Joby Aviation Academy Tenant |
+| `bam` | Blade Air Mobility | Blade Air Mobility Tenant |
+| `eat` | Elevate Air | Elevate Air Tenant |
+| `h2f` | H2Fly | H2Fly Tenant |
+| `jai` | Joby Aero Inc. | Joby Aero Inc. Tenant |
+| `jag` | Joby Austria Gmbh | Joby Austria Gmbh Tenant |
+| `jac` | Joby Aviation College | Joby Aviation College Tenant |
+| `jel` | Joby Elevate MEA, L.L.C | Joby Elevate MEA, L.L.C Tenant |
+
+For each selected tenant, rows whose `business unit description` matches the tenant's configured value (case-insensitive, whitespace-trimmed) are written to a sibling file `<original> <tenant_id>.csv` with an added `tenantmember` column (set to the tenant ID) used downstream for auto-enrollment. Those rows are removed from the main output, and the new tenant file is then run through the same normalization (with no further tenant splitting).
+
+> **Special case — `jai` (Joby Aero Inc.):** its rows are still split into their own file, but `tenantmember` is left empty rather than set, because Joby Aero Inc. is the default and does not need its own auto-enrollment tenant.
+
+> **Warning:** The original CSV is overwritten in place when processing completes. Before each file is processed, a backup of the original is copied to an `Original Files/` subfolder (alongside the input file), prefixed with `Original `.
 
 ## Building the desktop app
 
@@ -137,13 +165,14 @@ The build bundles `tenants.json`; `dont_suspend.csv` is intentionally left exter
 
 | File | Purpose |
 |---|---|
-| [Main.py](Main.py) | Entry point — validates tenant arguments, backs up originals, and runs the read → process loop. |
-| [HRImport.py](HRImport.py) | `HRImport.run()` — dispatches and performs processing based on the filename. |
+| [App.py](App.py) | GUI front end (drag-and-drop, tenant multi-select, log panel) — the primary interface and what the packaged builds run. |
+| [Main.py](Main.py) | CLI entry point — validates tenant arguments, backs up originals, and runs the read → process loop. |
+| [HRImport.py](HRImport.py) | `HRImport.run()` — dispatches and performs processing based on the filename. Shared by both front ends. |
 | [Tenants.py](Tenants.py) | `load_tenants()` — reads tenant definitions from `tenants.json`. |
 | [resources.py](resources.py) | Resolves data-file paths in both dev and packaged (PyInstaller) builds. |
 | [HRImport.spec](HRImport.spec) | PyInstaller build recipe for the desktop app. |
 | [.github/workflows/build.yml](.github/workflows/build.yml) | CI that builds the Windows/macOS apps and attaches them to Releases. |
 | [tenants.json](tenants.json) | Tenant ID → business-unit configuration. |
-| `dont_suspend.csv` | Local (git-ignored) list of IDs to always retain. Required at runtime. |
+| `dont_suspend.csv` | Local (git-ignored) list of IDs to exclude from the output (so they aren't suspended/deleted downstream). Optional — skipped with a warning if absent. |
 | [not_in_both.py](not_in_both.py) | Standalone helper (not wired into `Main.py`). **LEGACY** |
 | [requirements.txt](requirements.txt) | Python dependencies. |

@@ -59,7 +59,7 @@ def main() -> None:
     Examples:
         python Main.py                    # Process files with no tenant splitting
         python Main.py jbg               # Process files only splitting for 'jbg' tenant
-        python Main.py jbg embraer       # Process files splitting for both tenants
+        python Main.py jbg bam           # Process files splitting for both tenants
     
     Raises:
         ValueError: If tenant_id provided via CLI is not found in tenants.json
