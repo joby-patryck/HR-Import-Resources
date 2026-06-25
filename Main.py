@@ -83,7 +83,8 @@ def main() -> None:
                 usage()
                 return
             
-            # The elephant
+            # Easter egg (intentional, not a real feature): the "-elephant" arg
+            # prints a one-liner and exits. Harmless; safe to ignore or remove.
             if arg == "-elephant":
                 print("Address me...")
                 return

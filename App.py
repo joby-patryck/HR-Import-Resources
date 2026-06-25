@@ -21,6 +21,18 @@ from tkinter import ttk
 from tkinter import font as tkfont
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
+# --- File layout note (read this first) -------------------------------------
+# This module is written in tkinter's usual top-to-bottom "script" style:
+# the callback functions below are DEFINED first, but the widgets and module
+# level globals they reference (root, status_label, tenants, file_listbox,
+# tenant_dropdown, the COLOR/FONT constants, attach_marquee, ...) are CREATED
+# further down, just before root.mainloop(). That works because a callback's
+# body only runs in response to a user action (a click/drop), by which point
+# every global it touches already exists. So if a function below references a
+# name you can't find nearby, it's a module-level global defined lower in the
+# file — not a missing import.
+# ----------------------------------------------------------------------------
+
 def normalize_input_path(raw: str) -> str:
     """
     Clean a file path pasted or drag-and-dropped into the prompt, cross-platform.
@@ -41,9 +53,24 @@ def normalize_input_path(raw: str) -> str:
     return os.path.normpath(path)
 
 def process(filename: str, use_tenants: list[dict[str, str]]) -> None:
+    """
+    Back up and process a single dropped file, reporting the outcome in the LOG panel.
+
+    This is the GUI counterpart to the per-file body of Main.main()'s loop:
+    it copies the untouched original into an "Original Files" folder beside the
+    input, then runs HRImport.run() with the selected tenants. Unlike the CLI,
+    every result (success, backup warning, or error) is appended to the on-screen
+    status_label instead of printed to stdout, and any exception is caught here so
+    one bad file never aborts the rest of the batch.
+
+    Args:
+        filename: Path to the CSV (as dropped/pasted; cleaned via normalize_input_path).
+        use_tenants: Tenant config dicts to split out (from the dropdown selection).
+    """
     filename = normalize_input_path(filename)
     filename_short = os.path.basename(filename)
-    
+
+    # Read the existing log text so each new line is appended rather than replacing it.
     current_text = status_label.cget("text")
 
     # Backup original files to a separate directory to preserve unmodified data for auditing or reprocessing if needed
@@ -63,18 +90,37 @@ def process(filename: str, use_tenants: list[dict[str, str]]) -> None:
         status_label.config(text=f"{current_text}\nError occurred while processing file: {filename_short} - {type(e).__name__}: {e}")
 
 def handle_drop(event):
-    # Raw data
+    """
+    Drag-and-drop handler: replace the listbox contents with the dropped file paths.
+
+    Fired by tkinterdnd2 on a <<Drop>> event. event.data is a single string
+    containing every dropped path (paths with spaces are brace-wrapped), so we use
+    Tk's splitlist to parse it back into individual paths. The listbox is cleared
+    first, so each drop replaces the previous selection rather than appending.
+    """
+    # event.data is one Tk-formatted string holding all dropped paths.
     raw_data = event.data
 
-    # Split the raw data into individual file paths
+    # splitlist correctly separates paths even when some are {brace-wrapped} for spaces.
     file_paths = root.tk.splitlist(raw_data)
 
-    # Clear listbox and display droped file paths
+    # Clear the listbox, then display the newly dropped file paths.
     file_listbox.delete(0, tk.END)
     for path in file_paths:
         file_listbox.insert(tk.END, path)
 
 def on_process_button_click():
+    """
+    PROCESS FILES handler: process every listed file for the selected tenant(s).
+
+    Known limitation: processing runs synchronously on tkinter's main (UI) thread,
+    so the window will appear frozen/unresponsive while a large batch is crunching
+    — this is expected, not a crash. Files are processed one at a time, in listbox
+    order, and each file's result is appended to the LOG when it finishes. (If
+    responsiveness ever matters, the fix is to move process() onto a worker thread
+    and marshal status_label updates back to the UI thread; intentionally not done
+    here to keep the app simple.)
+    """
     # Map the selected human-readable names back to their full tenant dicts, since
     # HRImport expects dicts with business_unit_description/tenant_id, not name strings.
     selected_names = tenant_dropdown.get_selected()
@@ -85,6 +131,7 @@ def on_process_button_click():
         print(f"Finished processing file: {file}")
 
 def on_clear_button_click():
+    """CLEAR LOG handler: reset the LOG panel back to its idle message."""
     status_label.config(text="Ready to process files.")
 
 HELP_TEXT = (
@@ -118,6 +165,7 @@ HELP_TEXT = (
 )
 
 def on_help_button_click():
+    """HELP handler: open a modal-ish window showing HELP_TEXT with its own marquee."""
     win = tk.Toplevel(root)
     win.title("Help — HR Import")
     win.geometry("440x520")
@@ -155,10 +203,31 @@ def on_help_button_click():
     win.focus_set()
 
 class MultiSelectDropdown(tk.Menubutton):
+    """
+    A menu-button that lets the user tick several options at once (used for tenants).
+
+    Tkinter has no built-in multi-select widget, so this wraps a Menubutton whose
+    drop-down menu is a list of checkbuttons plus "None"/"All" shortcuts. The
+    button's own text mirrors the current selection (or falls back to the default
+    label when nothing is ticked). Call get_selected() to read the chosen options.
+
+    Each checkbutton is backed by a BooleanVar stored in self.choices, keyed by the
+    option's display string.
+    """
+
     def __init__(self, parent, label, options, **kwargs):
+        """
+        Build the menu-button and populate its checkbutton menu.
+
+        Args:
+            parent: The parent tkinter widget.
+            label: Default button text shown when no option is selected.
+            options: The selectable option strings (here, tenant_name values).
+            **kwargs: Passed through to tk.Menubutton (colors, font, etc.).
+        """
         super().__init__(parent, text=label, relief="raised", **kwargs)
 
-        # Create dropdwon menu
+        # Create the drop-down menu (tearoff=0 hides Tk's "detach menu" dashed line).
         self.menu = tk.Menu(self, tearoff=0)
         self["menu"] = self.menu
 
@@ -167,7 +236,7 @@ class MultiSelectDropdown(tk.Menubutton):
         self.menu.add_command(label="All", command=self._select_all)
         self.menu.add_separator()
 
-        # Track selected items
+        # One BooleanVar per option tracks whether its checkbutton is ticked.
         self.choices = {}
         for option in options:
             self.choices[option] = tk.BooleanVar(value=False)
@@ -179,16 +248,19 @@ class MultiSelectDropdown(tk.Menubutton):
         self.default_label = label
 
     def _clear_selection(self):
+        """Untick every option (the "None" entry) and refresh the button text."""
         for var in self.choices.values():
             var.set(False)
         self._update_button_text()
 
     def _select_all(self):
+        """Tick every option (the "All" entry) and refresh the button text."""
         for var in self.choices.values():
             var.set(True)
         self._update_button_text()
 
     def _update_button_text(self):
+        """Sync the button label to the current selection (default label if empty)."""
         selected = self.get_selected()
         if not selected:
             self.config(text=self.default_label)
@@ -196,6 +268,7 @@ class MultiSelectDropdown(tk.Menubutton):
             self.config(text=", ".join(selected))
 
     def get_selected(self):
+        """Return the list of option strings whose checkbuttons are currently ticked."""
         return [option for option, var in self.choices.items() if var.get()]
 
 # --- Bold teal / blue / purple theme ---------------------------------------

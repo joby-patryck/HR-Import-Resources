@@ -21,11 +21,18 @@ def _load_dont_suspend() -> list[str]:
     The file is user-editable and expected alongside the app (not bundled), so
     it may be absent on a fresh install. When missing we warn and return an
     empty list rather than crashing, so the app still runs out of the box.
+
+    NOTE on the column name: the values returned here are matched against the
+    'idnumber' / 'useridnumber' columns, NOT against email addresses. The CSV
+    column is named "email" only for historical reasons (that is what the
+    source export happened to call it); whatever IDs you list under that header
+    are what get retained. Returns a plain list of those ID strings.
     """
     path = external_path("dont_suspend.csv")
     if not path.exists():
         print(f"Warning: {path.name} not found at {path} - skipping retain-list filter.")
         return []
+    # "email" is the (misnamed) header; its cells actually hold idnumber values.
     return pandas.read_csv(path)["email"].tolist()
 
 
@@ -113,6 +120,12 @@ class HRImport:
         Removes rows with missing useridnumber, fills NaN manager emails with "#N/A" placeholder,
         drops suspended users, converts manager email and useridnumber to lowercase, and drops any
         IDs listed in dont_suspend.csv (the retain-list — excluded so they aren't acted on downstream).
+
+        Note: unlike _users, Job Assignments are deliberately NOT split by tenant and get
+        no 'tenantmember' column. Tenant splitting + auto-enrollment is a Users-file concern
+        (it controls which LMS tenant a person is enrolled into); Job Assignments only carry
+        the manager/reporting relationships, which are tenant-agnostic, so the 'tenants'
+        argument to run() is simply ignored on this path.
         """
         # Remove rows where useridnumber is missing, empty, or NaN - this field is required downstream
         self.data = self.data.loc[
@@ -151,7 +164,7 @@ class HRImport:
                      - business_unit_description: business unit to match for splitting
                      - tenant_name: human-readable tenant name
         """
-        # Determine whther or not the file being processed is a terminated employee file based on filename keyword - this is used for removing the 'deleted' column and renaming the 'suspended' column
+        # Determine whether the file being processed is a terminated-employee file based on the filename keyword - this drives removing the 'deleted' column and renaming 'suspended' to 'deleted' below
         terminated = "terminated" in self.filename.lower()
 
         # Remove rows where idnumber is missing or empty - this field is required for user identification
@@ -159,11 +172,19 @@ class HRImport:
             ~(self.data["idnumber"].isna() | (self.data["idnumber"] == "")),:
         ].copy()
         
-        # Split data for each configured tenant into separate CSV files with tenantmember assignment
-        # Iteratively removes matching records from self.data in each iteration
+        # Split data for each configured tenant into separate CSV files with tenantmember assignment.
+        # Each call removes the matched rows from self.data and returns the remainder, so successive
+        # tenants split from progressively smaller data.
+        #
+        # ORDERING NOTE: this happens BEFORE the suspended/active filter below, so the rows handed to
+        # _split_tenant still contain both active and suspended people. That is intentional and safe:
+        # _split_tenant writes the tenant file and immediately re-processes it via run([]). Because the
+        # tenant filename inherits this file's "(Active)"/"(Terminated)" prefix, that recursive run lands
+        # back in _users and applies the SAME suspension filter to the tenant file. So tenant rows get
+        # filtered too — just on the recursive pass, not here.
         for tenant in tenants:
             self.data = self._split_tenant(tenant["business_unit_description"], tenant["tenant_id"])
-        
+
         if terminated: # If processing a terminated employee file, filter to suspended users and rename columns accordingly
             self.data = self.data.loc[self.data["suspended"] == 1, :].copy()
             self.data = self.data.drop(columns=["deleted"])
