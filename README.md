@@ -110,12 +110,18 @@ Other arguments:
 Every processed file is backed up first, then transformed in place.
 
 - **`Job Assignments` files** — drops rows with a missing `useridnumber`, fills missing `Manager email` values with `#N/A`, drops suspended users (`suspended == 1`), and lowercases `Manager email` and `useridnumber`.
-- **`Users` files** — drops rows with a missing `idnumber`, splits out tenant-specific rows (see below), filters by suspension state (see *Terminated files* below), lowercases `idnumber` and `email`, and blanks the `tenantmember` column (set to empty) on the remaining (non-tenant) rows so they are not auto-enrolled.
+- **`Users` files** — first split by employment status (see *Active / Terminated splitting* below), then each half drops rows with a missing `idnumber`, splits out tenant-specific rows (see below), filters by suspension state, lowercases `idnumber` and `email`, and blanks the `tenantmember` column (set to empty) on the remaining (non-tenant) rows so they are not auto-enrolled.
 - Both paths drop any account whose ID appears in `dont_suspend.csv` (matched against `idnumber` / `useridnumber`), so the downstream import never suspends or deletes those people. This filter is skipped (with a warning) when `dont_suspend.csv` is absent.
 
-### Terminated files
+### Active / Terminated splitting
 
-For `Users` files whose name contains `terminated` (case-insensitive), the suspension handling is inverted: only suspended rows (`suspended == 1`) are kept, the existing `deleted` column is dropped, and `suspended` is renamed to `deleted`. Non-terminated `Users` files instead keep only active rows (`suspended == 0`).
+A `Users` file is processed differently depending on whether its name already marks it as active or terminated (case-insensitive):
+
+- **Raw export (name contains neither `active` nor `terminated`)** — the file is **automatically split in two**: copies named `(Active) <original>` and `(Terminated) <original>` are written alongside it, each is processed independently, and the original file is then **deleted** (its untouched backup remains in `Original Files/`).
+- **Active file (name contains `active`)** — keeps only active rows (`suspended == 0`).
+- **Terminated file (name contains `terminated`)** — the suspension handling is inverted: only suspended rows (`suspended == 1`) are kept, the existing `deleted` column is dropped, and `suspended` is renamed to `deleted`.
+
+Tenant splitting (below) runs *within* each half, so any tenant output files inherit the `(Active)` / `(Terminated)` prefix.
 
 ### Tenant splitting
 
@@ -137,7 +143,7 @@ For each selected tenant, rows whose `business unit description` matches the ten
 
 > **Special case — `jai` (Joby Aero Inc.):** its rows are still split into their own file, but `tenantmember` is left empty rather than set, because Joby Aero Inc. is the default and does not need its own auto-enrollment tenant.
 
-> **Warning:** The original CSV is overwritten in place when processing completes. Before each file is processed, a backup of the original is copied to an `Original Files/` subfolder (alongside the input file), prefixed with `Original `.
+> **Warning:** The original CSV is overwritten in place when processing completes — except for a raw `Users` file, which is deleted after being split into its `(Active)` / `(Terminated)` halves (see above). Before each file is processed, a backup of the original is copied to an `Original Files/` subfolder (alongside the input file), prefixed with `Original `.
 
 ## Building the desktop app
 

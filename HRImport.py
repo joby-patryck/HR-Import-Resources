@@ -35,8 +35,9 @@ class HRImport:
     
     Performs file-type specific transformations:
     - Job Assignments: validates useridnumber, drops suspended users, lowercases fields
-    - Users: splits tenant-specific records, validates idnumber, filters by suspension
-      state (inverted for "terminated" files), lowercases fields
+    - Users: a raw export is first auto-split into "(Active)"/"(Terminated)" files;
+      each is then validated (idnumber), tenant-split, filtered by suspension state
+      (inverted for "terminated" files), and lowercased.
     Both paths drop any IDs listed in dont_suspend.csv (the retain-list).
 
     Attributes:
@@ -190,10 +191,15 @@ class HRImport:
     def run(self, tenants: list[dict[str, str]]) -> None:
         """
         Execute appropriate file transformation and save results.
-        
-        Routes to file-type-specific processing based on filename keywords, then persists
-        transformed dataframe back to the original CSV file.
-        
+
+        Routes to file-type-specific processing based on filename keywords:
+        - "Job Assignments" -> _job_assignments()
+        - "Users" already marked "active"/"terminated" -> _users() directly
+        - "Users" with neither keyword (a raw export) -> automatically split into
+          "(Active) <name>" and "(Terminated) <name>" copies, each processed via a
+          recursive run(), after which the original file is deleted.
+        The processed dataframe is then persisted back to the file's own location.
+
         Args:
             tenants: List of tenant configurations passed to file-type-specific processors
 
