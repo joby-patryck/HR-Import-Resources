@@ -42,9 +42,8 @@ def normalize_input_path(raw: str) -> str:
 
 def process(filename: str, use_tenants: list[dict[str, str]]) -> None:
     filename = normalize_input_path(filename)
-
     filename_short = os.path.basename(filename)
-
+    
     current_text = status_label.cget("text")
 
     # Backup original files to a separate directory to preserve unmodified data for auditing or reprocessing if needed

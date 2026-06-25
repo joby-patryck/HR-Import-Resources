@@ -8,6 +8,7 @@ listed in dont_suspend.csv. Shared by both front ends (App.py GUI and Main.py CL
 """
 import pandas
 import os
+import shutil
 from resources import external_path
 
 
@@ -102,8 +103,7 @@ class HRImport:
             tentant_import.run([]) # Process tenant-specific file without further tenant splitting
             
         return remaining_data
-
-
+            
 
     def _job_assignments(self) -> None:
         """
@@ -155,8 +155,7 @@ class HRImport:
 
         # Remove rows where idnumber is missing or empty - this field is required for user identification
         self.data = self.data.loc[
-            ~(self.data["idnumber"].isna() | (self.data["idnumber"] == "")),
-            :
+            ~(self.data["idnumber"].isna() | (self.data["idnumber"] == "")),:
         ].copy()
         
         # Split data for each configured tenant into separate CSV files with tenantmember assignment
@@ -210,7 +209,23 @@ class HRImport:
         if "job assignments" in short_filename.lower():
             self._job_assignments()
         elif "users" in short_filename.lower():
-            self._users(tenants)
+            if "active" in short_filename.lower() or "terminated" in short_filename.lower():
+                # Files are already split into active vs terminated
+                self._users(tenants)
+            else:
+                # Automatically split active and terminated users into separate files
+                file_dir = os.path.dirname(self.filename)
+                base = os.path.basename(self.filename)
+
+                active_path = os.path.join(file_dir, "(Active) " + base)
+                shutil.copy(self.filename, active_path)
+                active_import = HRImport(active_path)
+                active_import.run(tenants)
+
+                terminated_path = os.path.join(file_dir, "(Terminated) " + base)
+                shutil.copy(self.filename, terminated_path)
+                terminated_import = HRImport(terminated_path)
+                terminated_import.run(tenants)
         else:
             raise ValueError("Filename must contain either 'Job Assignments' or 'Users' to determine the type of file being processed.")
 
