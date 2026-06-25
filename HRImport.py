@@ -7,7 +7,7 @@ any configured tenants (see tenants.json) into their own files, and drops any ID
 listed in dont_suspend.csv. Shared by both front ends (App.py GUI and Main.py CLI).
 """
 import pandas
-
+import os
 from resources import external_path
 
 
@@ -203,11 +203,13 @@ class HRImport:
         """
         print(f"Working {self.filename}...")
 
+        short_filename = os.path.basename(self.filename)
+
         # Route to appropriate processing based on filename keyword to determine file type
         # Case-insensitive matching allows for variations in naming conventions
-        if "job assignments" in self.filename.lower():
+        if "job assignments" in short_filename.lower():
             self._job_assignments()
-        elif "users" in self.filename.lower():
+        elif "users" in short_filename.lower():
             self._users(tenants)
         else:
             raise ValueError("Filename must contain either 'Job Assignments' or 'Users' to determine the type of file being processed.")
