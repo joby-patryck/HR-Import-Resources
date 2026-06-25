@@ -59,7 +59,7 @@ def main() -> None:
     Examples:
         python Main.py                    # Process files with no tenant splitting
         python Main.py jbg               # Process files only splitting for 'jbg' tenant
-        python Main.py jbg embraer       # Process files splitting for both tenants
+        python Main.py jbg bam           # Process files splitting for both tenants
     
     Raises:
         ValueError: If tenant_id provided via CLI is not found in tenants.json
@@ -83,7 +83,8 @@ def main() -> None:
                 usage()
                 return
             
-            # The elephant
+            # Easter egg (intentional, not a real feature): the "-elephant" arg
+            # prints a one-liner and exits. Harmless; safe to ignore or remove.
             if arg == "-elephant":
                 print("Address me...")
                 return
@@ -103,9 +104,9 @@ def main() -> None:
     while filename.lower() not in QUIT_CRITERIA:
         # Backup original files to a separate directory to preserve unmodified data for auditing or reprocessing if needed
         try:
-            oringial_files_dir = os.path.join(os.path.dirname(filename), "Original Files")
-            os.makedirs(oringial_files_dir, exist_ok=True)
-            shutil.copy(filename, os.path.join(oringial_files_dir, "Original " + os.path.basename(filename)))
+            original_files_dir = os.path.join(os.path.dirname(filename), "Original Files")
+            os.makedirs(original_files_dir, exist_ok=True)
+            shutil.copy(filename, os.path.join(original_files_dir, "Original " + os.path.basename(filename)))
         except FileNotFoundError as e:
             print(f"Warning: Failed to backup original file '{filename}' - {e}")
 

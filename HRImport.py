@@ -1,10 +1,39 @@
 """
 HR Import module for processing and transforming HR data files.
 
-Converts names to lowercase and separates Joby Germany users into tenant-specific files.
-Routes file processing based on filename keywords ("Job Assignments" vs "Users").
+Routes file processing based on filename keywords ("Job Assignments" vs "Users"),
+normalizes IDs/emails to lowercase, filters by suspension state, splits rows for
+any configured tenants (see tenants.json) into their own files, and drops any IDs
+listed in dont_suspend.csv. Shared by both front ends (App.py GUI and Main.py CLI).
 """
 import pandas
+import os
+import shutil
+from resources import external_path
+
+
+def _load_dont_suspend() -> list[str]:
+    """
+    Load the retain-list of IDs to exclude from the output.
+
+    These are people who must NOT be suspended/deleted downstream, so they are
+    dropped from the processed file (and therefore left untouched by the import).
+    The file is user-editable and expected alongside the app (not bundled), so
+    it may be absent on a fresh install. When missing we warn and return an
+    empty list rather than crashing, so the app still runs out of the box.
+
+    NOTE on the column name: the values returned here are matched against the
+    'idnumber' / 'useridnumber' columns, NOT against email addresses. The CSV
+    column is named "email" only for historical reasons (that is what the
+    source export happened to call it); whatever IDs you list under that header
+    are what get retained. Returns a plain list of those ID strings.
+    """
+    path = external_path("dont_suspend.csv")
+    if not path.exists():
+        print(f"Warning: {path.name} not found at {path} - skipping retain-list filter.")
+        return []
+    # "email" is the (misnamed) header; its cells actually hold idnumber values.
+    return pandas.read_csv(path)["email"].tolist()
 
 
 class HRImport:
@@ -12,9 +41,12 @@ class HRImport:
     Process HR CSV files with tenant splitting and data normalization.
     
     Performs file-type specific transformations:
-    - Job Assignments: validates useridnumber, filters test accounts, lowercases fields
-    - Users: splits tenant-specific records, validates idnumber, lowercases fields
-    
+    - Job Assignments: validates useridnumber, drops suspended users, lowercases fields
+    - Users: a raw export is first auto-split into "(Active)"/"(Terminated)" files;
+      each is then validated (idnumber), tenant-split, filtered by suspension state
+      (inverted for "terminated" files), and lowercased.
+    Both paths drop any IDs listed in dont_suspend.csv (the retain-list).
+
     Attributes:
         filename (str): Path to the CSV file being processed
         data (pandas.DataFrame): CSV data loaded into memory
@@ -42,7 +74,11 @@ class HRImport:
         For each tenant, filters records matching the business_unit_description (case-insensitive),
         writes them to a new CSV with tenant suffix and adds 'tenantmember' column for auto-enrollment.
         Returns the main dataframe with tenant records removed.
-        
+
+        Special case: tenant_id "jai" (Joby Aero Inc.) is still split into its own file, but
+        'tenantmember' is left empty rather than set, since it is the default and needs no
+        auto-enrollment tenant. The new tenant file is re-run through run([]) for normalization.
+
         Args:
             business_unit_description: Business unit identifier to filter on (e.g., "joby germany gmbh")
             tenant_id: Tenant code to add in output file naming and tenantmember column (e.g., "jbg")
@@ -63,22 +99,33 @@ class HRImport:
         # Write tenant records to new CSV with tenant identifier in filename if records found
         if not tenant_data.empty:
             tenant_filename = self.filename.replace(".csv", f" {tenant_id}.csv")
-            tenant_data["tenantmember"] = tenant_id  # Add column for auto-enrollment in downstream systems
+
+            if tenant_id == "jai": # Joby Aero Inc. does not require it's own tenant
+                tenant_data["tenantmember"] = None
+            else:
+                tenant_data["tenantmember"] = tenant_id  # Add column for auto-enrollment in downstream systems
+                
             tenant_data.to_csv(tenant_filename, index=False)
 
             tentant_import = HRImport(tenant_filename)
             tentant_import.run([]) # Process tenant-specific file without further tenant splitting
             
         return remaining_data
-
-
+            
 
     def _job_assignments(self) -> None:
         """
-        Transform Job Assignments file: validate required fields, standardize casing, filter test accounts.
-        
+        Transform Job Assignments file: validate required fields, standardize casing, apply retain-list.
+
         Removes rows with missing useridnumber, fills NaN manager emails with "#N/A" placeholder,
-        converts manager email and useridnumber to lowercase, and filters out known test accounts.
+        drops suspended users, converts manager email and useridnumber to lowercase, and drops any
+        IDs listed in dont_suspend.csv (the retain-list — excluded so they aren't acted on downstream).
+
+        Note: unlike _users, Job Assignments are deliberately NOT split by tenant and get
+        no 'tenantmember' column. Tenant splitting + auto-enrollment is a Users-file concern
+        (it controls which LMS tenant a person is enrolled into); Job Assignments only carry
+        the manager/reporting relationships, which are tenant-agnostic, so the 'tenants'
+        argument to run() is simply ignored on this path.
         """
         # Remove rows where useridnumber is missing, empty, or NaN - this field is required downstream
         self.data = self.data.loc[
@@ -97,39 +144,47 @@ class HRImport:
         self.data["Manager email"] = self.data["Manager email"].str.lower()
         self.data["useridnumber"] = self.data["useridnumber"].str.lower()
 
-        # Filter out known problematic accounts
-        dont_suspend = pandas.read_csv("dont_suspend.csv")["email"].tolist()
+        # Drop IDs on the retain-list so they aren't suspended/deleted downstream
+        dont_suspend = _load_dont_suspend()
         self.data = self.data.loc[~self.data["useridnumber"].isin(dont_suspend), :].copy()
 
         return
 
     def _users(self, tenants: list[dict[str, str]]) -> None:
         """
-        Transform Users file: validate required fields, split by tenant, standardize casing, filter test accounts.
-        
+        Transform Users file: validate required fields, split by tenant, standardize casing, apply retain-list.
+
         Removes rows with missing idnumber, iterates through configured tenants to split records
-        into tenant-specific files, then converts idnumber and email to lowercase and filters test accounts.
-        
+        into tenant-specific files, filters by suspension state (inverted for "terminated" files),
+        converts idnumber and email to lowercase, and drops any IDs listed in dont_suspend.csv.
+
         Args:
             tenants: List of tenant configuration dicts with keys:
                      - tenant_id: tenant code identifier
                      - business_unit_description: business unit to match for splitting
                      - tenant_name: human-readable tenant name
         """
-        # Determine whther or not the file being processed is a terminated employee file based on filename keyword - this is used for removing the 'deleted' column and renaming the 'suspended' column
+        # Determine whether the file being processed is a terminated-employee file based on the filename keyword - this drives removing the 'deleted' column and renaming 'suspended' to 'deleted' below
         terminated = "terminated" in self.filename.lower()
 
         # Remove rows where idnumber is missing or empty - this field is required for user identification
         self.data = self.data.loc[
-            ~(self.data["idnumber"].isna() | (self.data["idnumber"] == "")),
-            :
+            ~(self.data["idnumber"].isna() | (self.data["idnumber"] == "")),:
         ].copy()
         
-        # Split data for each configured tenant into separate CSV files with tenantmember assignment
-        # Iteratively removes matching records from self.data in each iteration
+        # Split data for each configured tenant into separate CSV files with tenantmember assignment.
+        # Each call removes the matched rows from self.data and returns the remainder, so successive
+        # tenants split from progressively smaller data.
+        #
+        # ORDERING NOTE: this happens BEFORE the suspended/active filter below, so the rows handed to
+        # _split_tenant still contain both active and suspended people. That is intentional and safe:
+        # _split_tenant writes the tenant file and immediately re-processes it via run([]). Because the
+        # tenant filename inherits this file's "(Active)"/"(Terminated)" prefix, that recursive run lands
+        # back in _users and applies the SAME suspension filter to the tenant file. So tenant rows get
+        # filtered too — just on the recursive pass, not here.
         for tenant in tenants:
             self.data = self._split_tenant(tenant["business_unit_description"], tenant["tenant_id"])
-        
+
         if terminated: # If processing a terminated employee file, filter to suspended users and rename columns accordingly
             self.data = self.data.loc[self.data["suspended"] == 1, :].copy()
             self.data = self.data.drop(columns=["deleted"])
@@ -140,10 +195,15 @@ class HRImport:
         # Normalize email addresses and IDs to lowercase for consistent matching/comparison
         self.data["idnumber"] = self.data["idnumber"].str.lower()
         self.data["email"] = self.data["email"].str.lower()
-        self.data["tenantmember"] = None  # Clear tenantmember for non-tenant-specific records to prevent accidental enrollment
+        # Only initialize tenantmember when it isn't already present. Tenant-specific
+        # files written by _split_tenant arrive here (via run([])) with this column
+        # already populated with their tenant_id, so we must not clobber it. The main
+        # (non-tenant) file has no such column and gets None to prevent accidental enrollment.
+        if "tenantmember" not in self.data.columns:
+            self.data["tenantmember"] = None
 
-        # Filter out known problematic accounts
-        dont_suspend = pandas.read_csv("dont_suspend.csv")["email"].tolist()
+        # Drop IDs on the retain-list so they aren't suspended/deleted downstream
+        dont_suspend = _load_dont_suspend()
         self.data = self.data.loc[~self.data["idnumber"].isin(dont_suspend), :].copy()
 
         return
@@ -152,10 +212,15 @@ class HRImport:
     def run(self, tenants: list[dict[str, str]]) -> None:
         """
         Execute appropriate file transformation and save results.
-        
-        Routes to file-type-specific processing based on filename keywords, then persists
-        transformed dataframe back to the original CSV file.
-        
+
+        Routes to file-type-specific processing based on filename keywords:
+        - "Job Assignments" -> _job_assignments()
+        - "Users" already marked "active"/"terminated" -> _users() directly
+        - "Users" with neither keyword (a raw export) -> automatically split into
+          "(Active) <name>" and "(Terminated) <name>" copies, each processed via a
+          recursive run(), after which the original file is deleted.
+        The processed dataframe is then persisted back to the file's own location.
+
         Args:
             tenants: List of tenant configurations passed to file-type-specific processors
 
@@ -164,12 +229,37 @@ class HRImport:
         """
         print(f"Working {self.filename}...")
 
+        short_filename = os.path.basename(self.filename)
+
         # Route to appropriate processing based on filename keyword to determine file type
         # Case-insensitive matching allows for variations in naming conventions
-        if "job assignments" in self.filename.lower():
+        if "job assignments" in short_filename.lower():
             self._job_assignments()
-        elif "users" in self.filename.lower():
-            self._users(tenants)
+        elif "users" in short_filename.lower():
+            if "active" in short_filename.lower() or "terminated" in short_filename.lower():
+                # Files are already split into active vs terminated
+                self._users(tenants)
+            else:
+                # Automatically split active and terminated users into separate files
+                file_dir = os.path.dirname(self.filename)
+                base = os.path.basename(self.filename)
+
+                active_path = os.path.join(file_dir, "(Active) " + base)
+                shutil.copy(self.filename, active_path)
+                active_import = HRImport(active_path)
+                active_import.run(tenants)
+
+                terminated_path = os.path.join(file_dir, "(Terminated) " + base)
+                shutil.copy(self.filename, terminated_path)
+                terminated_import = HRImport(terminated_path)
+                terminated_import.run(tenants)
+
+                os.remove(self.filename)  # Remove the original file after splitting into active/terminated
+
+                # Print success message after potentially long-running operations complete
+                print(f"Successfully processed file {self.filename}.")
+
+                return
         else:
             raise ValueError("Filename must contain either 'Job Assignments' or 'Users' to determine the type of file being processed.")
 

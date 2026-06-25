@@ -9,6 +9,41 @@
             "tenant_name": "Joby Aviation Academy Tenant",
             "tenant_id": "jaa",
             "business_unit_description": "TBD"
+        },
+        {
+            "tenant_name": "Blade Air Mobility Tenant",
+            "tenant_id": "bam",
+            "business_unit_description": "Blade Air Mobility"
+        },
+        {
+            "tenant_name": "Elevate Air Tenant",
+            "tenant_id": "eat",
+            "business_unit_description": "Elevate Air"
+        },
+        {
+            "tenant_name": "H2Fly Tenant",
+            "tenant_id": "h2f",
+            "business_unit_description": "H2Fly"
+        },
+        {
+            "tenant_name": "Joby Aero Inc. Tenant",
+            "tenant_id": "jai",
+            "business_unit_description": "Joby Aero Inc."
+        },
+        {
+            "tenant_name": "Joby Austria Gmbh Tenant",
+            "tenant_id": "jag",
+            "business_unit_description": "Joby Austria Gmbh"
+        },
+        {
+            "tenant_name": "Joby Aviation College Tenant",
+            "tenant_id": "jac",
+            "business_unit_description": "Joby Aviation College"
+        },
+        {
+            "tenant_name": "Joby Elevate MEA, L.L.C Tenant",
+            "tenant_id": "jel",
+            "business_unit_description": "Joby Elevate MEA, L.L.C"
         }
     ]
 }

@@ -1,0 +1,95 @@
+name: Build desktop app
+
+# Build a Windows .exe and a macOS .app. On a version tag (e.g. v1.0.0) the
+# zipped artifacts are attached to the matching GitHub Release so users can
+# download and run them with no Python or setup. Manual runs (workflow_dispatch)
+# build the artifacts without publishing a release.
+#
+# Tk version note: tkinterdnd2 ships its native tkdnd library compiled against a
+# specific Tcl/Tk version per platform. For Apple Silicon it ships ONLY a Tcl/Tk
+# 9 build, so the macOS job must build with a Tk-9 Python (Homebrew). Windows
+# ships a Tk-8.6 tkdnd, which matches actions/setup-python. Mixing versions fails
+# at launch with "interpreter uses an incompatible stubs mechanism".
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # required to upload assets to the Release
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset: HR-Import-Windows.zip
+          - os: macos-latest
+            asset: HR-Import-macOS.zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Windows: setup-python's Tk 8.6 matches the bundled win-x64 tkdnd build.
+      - name: Set up Python (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # macOS (Apple Silicon): tkinterdnd2 ships only a Tcl/Tk 9 tkdnd for arm64,
+      # so we need a Python linked against Tk 9. Homebrew provides it; we build a
+      # venv from it (Homebrew Python is PEP 668 "externally managed", so we can't
+      # pip-install into it directly) and put the venv first on PATH.
+      - name: Set up Python with Tk 9 (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install python-tk@3.13
+          "$(brew --prefix python@3.13)/libexec/bin/python" -m venv "$HOME/build-venv"
+          echo "$HOME/build-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      # Guard: the Tk version PyInstaller will bundle must match the tkdnd binary
+      # tkinterdnd2 ships for this platform, or the app crashes at launch. Fail the
+      # build here (loudly) rather than shipping a broken artifact.
+      - name: Verify Tk version matches bundled tkdnd
+        shell: bash
+        run: |
+          python - <<'PY'
+          import sys, tkinter
+          v = tkinter.TkVersion
+          print(f"Tk version for build: {v} on {sys.platform}")
+          if sys.platform == "darwin":
+              assert v >= 9.0, f"macOS arm64 tkdnd requires Tk 9, build Python has Tk {v}"
+          PY
+
+      - name: Build
+        run: pyinstaller HRImport.spec
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path "dist/HR Import.exe" -DestinationPath "${{ matrix.asset }}"
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: cd dist && zip -r "../${{ matrix.asset }}" "HR Import.app"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}

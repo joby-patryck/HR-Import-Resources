@@ -1,1 +1,11 @@
+# Pip-installable dependencies (run: pip install -r requirements.txt)
 pandas>=2.2.3
+tkinterdnd2>=0.4.0  # drag-and-drop support for the GUI (App.py)
+
+# NOTE: The GUI (App.py) also requires `tkinter`, which is NOT on PyPI and
+# cannot be installed with pip. It ships with most Python builds, but on some
+# platforms must be added as a separate OS package. See README "Requirements".
+#   macOS (Homebrew):  brew install python-tk
+#   Debian/Ubuntu:     sudo apt install python3-tk
+#   Fedora:            sudo dnf install python3-tkinter
+#   Windows:           included with the python.org installer

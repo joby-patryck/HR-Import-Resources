@@ -7,6 +7,8 @@ case-insensitive tenant_id matching in CLI arguments and auto-enrollment logic.
 import json
 from pathlib import Path
 
+from resources import resource_path
+
 
 def load_tenants() -> list[dict[str, str]]:
     """
@@ -30,9 +32,10 @@ def load_tenants() -> list[dict[str, str]]:
         FileNotFoundError: If tenants.json cannot be found in the script directory
         json.JSONDecodeError: If tenants.json is not valid JSON
     """
-    # Construct absolute path to tenants.json relative to this script file
-    # Using Path(__file__).parent ensures we find config in script directory regardless of CWD
-    config_path: Path = Path(__file__).resolve().parent / "tenants.json"
+    # Resolve tenants.json relative to this module in development and to the
+    # PyInstaller bundle (sys._MEIPASS) when running as a packaged app — never
+    # the current working directory, which is unpredictable for a launched app.
+    config_path: Path = resource_path("tenants.json")
     
     try:
         with config_path.open("r", encoding="utf-8") as config_file:
