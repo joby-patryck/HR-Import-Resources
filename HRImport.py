@@ -226,6 +226,13 @@ class HRImport:
                 shutil.copy(self.filename, terminated_path)
                 terminated_import = HRImport(terminated_path)
                 terminated_import.run(tenants)
+
+                os.remove(self.filename)  # Remove the original file after splitting into active/terminated
+
+                # Print success message after potentially long-running operations complete
+                print(f"Successfully processed file {self.filename}.")
+
+                return
         else:
             raise ValueError("Filename must contain either 'Job Assignments' or 'Users' to determine the type of file being processed.")
 
